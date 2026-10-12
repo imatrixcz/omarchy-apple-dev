@@ -290,6 +290,17 @@ profile type and app id, entitlements, team id and every sealed hash. Any
 Without an App Store Connect key it signs with a local TEST identity. That
 output proves the pipeline, and Apple will reject that signature.
 
+For HTTPS authentication callbacks, set `ASC_ENTITLEMENTS_PATH` to the app's
+requested entitlements plist when running `ship.sh`. The signer copies its exact
+`com.apple.developer.associated-domains` values (`applinks:` and
+`webcredentials:`), never the provisioning profile's wildcard. Enable the
+`ASSOCIATED_DOMAINS` capability for the bundle ID in Apple Developer and recreate
+the provisioning profile first; this option does not enable capabilities through
+the API. Signing fails if the profile does not grant the requested domains.
+Offline verification accepts concrete domain values against a `*` profile grant
+and rejects mismatches. Existing entitlements and builds without this option
+are unchanged. Confirm the HTTPS callback on a signed device build.
+
 To upload, once:
 
 1. Create an App Store Connect API team key (role App Manager with access to

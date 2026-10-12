@@ -415,6 +415,29 @@ def bundles(app_dir):
     return out
 
 
+def associated_domains_allowed(requested, granted):
+    """Only concrete app-requested domains may use the profile's wildcard grant."""
+    return isinstance(requested, list) and isinstance(granted, list) and all(
+        isinstance(value, str) and value.startswith(("applinks:", "webcredentials:"))
+        and value.split(":", 1)[1] and "*" not in value
+        and not any(c.isspace() for c in value)
+        and (value in granted or "*" in granted) for value in requested)
+
+
+def requested_associated_domains():
+    path = os.environ.get("ASC_ENTITLEMENTS_PATH")
+    if not path:
+        return []
+    with Path(path).open("rb") as f:
+        requested = plistlib.load(f)
+    if not isinstance(requested, dict):
+        die("ASC_ENTITLEMENTS_PATH must contain an entitlements dictionary")
+    values = requested.get("com.apple.developer.associated-domains", [])
+    if not associated_domains_allowed(values, ["*"]):
+        die("requested Associated Domains must be concrete applinks: or webcredentials: values")
+    return values
+
+
 def install_all_bundles(app_dir, out_dir, prov_for, key_path, cert_path):
     """For every bundle (app + each PlugIns/*.appex): embed the profile, write a per-bundle
     entitlements plist (application-identifier, team-identifier, beta-reports-active if granted,
@@ -423,6 +446,7 @@ def install_all_bundles(app_dir, out_dir, prov_for, key_path, cert_path):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     groups_warned = False
+    requested_domains = requested_associated_domains()
     for path, ident in bundles(app_dir):
         prov = prov_for(ident)
         (path / "embedded.mobileprovision").write_bytes(prov)
@@ -433,6 +457,12 @@ def install_all_bundles(app_dir, out_dir, prov_for, key_path, cert_path):
             "keychain-access-groups")
             if k in granted}
         entitlements["get-task-allow"] = False
+        if path == Path(app_dir) and requested_domains:
+            domain_key = "com.apple.developer.associated-domains"
+            if not associated_domains_allowed(requested_domains, granted.get(domain_key, [])):
+                die(f"profile for {ident} does not grant the app's requested Associated Domains; "
+                    "enable ASSOCIATED_DOMAINS for the bundle ID and recreate its profile")
+            entitlements[domain_key] = requested_domains
         granted_groups = set(granted.get("com.apple.security.application-groups", []))
         if granted_groups:
             entitlements["com.apple.security.application-groups"] = sorted(granted_groups)
@@ -738,6 +768,10 @@ def _check_signature_seals(check, root, exe, rcodesign, prov, team, app_id):
     extra = set(signed_ent) - set(granted)
     check(not extra,
           f"signed entitlements are a subset of the profile{': extra ' + str(extra) if extra else ''}")
+    domain_key = "com.apple.developer.associated-domains"
+    if domain_key in signed_ent:
+        check(associated_domains_allowed(signed_ent[domain_key], granted.get(domain_key, [])),
+              "signed Associated Domains match the profile grant")
     cms = subprocess.run([rcodesign, "extract", "cms-pem", str(exe)], capture_output=True, check=True).stdout
     signers = {c.public_bytes(serialization.Encoding.DER) for c in pkcs7.load_pem_pkcs7_certificates(cms)}
     check(bool(signers & set(prov.get("DeveloperCertificates", []))),
@@ -812,6 +846,10 @@ def _check_appex(check, app, info, appex, rcodesign):
     check(not aextra,
           f"appex {appex.name}: signed entitlements are a subset of its profile"
           f"{': extra ' + str(aextra) if aextra else ''}")
+    domain_key = "com.apple.developer.associated-domains"
+    if domain_key in asent_ent:
+        check(associated_domains_allowed(asent_ent[domain_key], agranted.get(domain_key, [])),
+              f"appex {appex.name}: signed Associated Domains match the profile grant")
     acms = subprocess.run([rcodesign, "extract", "cms-pem", str(aexe)],
                           capture_output=True, check=True).stdout
     asigners = {c.public_bytes(serialization.Encoding.DER) for c in pkcs7.load_pem_pkcs7_certificates(acms)}
