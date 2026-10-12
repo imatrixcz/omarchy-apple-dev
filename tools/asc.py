@@ -772,6 +772,9 @@ def _check_signature_seals(check, root, exe, rcodesign, prov, team, app_id):
     if domain_key in signed_ent:
         check(associated_domains_allowed(signed_ent[domain_key], granted.get(domain_key, [])),
               "signed Associated Domains match the profile grant")
+    if os.environ.get("ASC_ENTITLEMENTS_PATH"):
+        check(signed_ent.get(domain_key, []) == requested_associated_domains(),
+              "signed Associated Domains match the app request")
     cms = subprocess.run([rcodesign, "extract", "cms-pem", str(exe)], capture_output=True, check=True).stdout
     signers = {c.public_bytes(serialization.Encoding.DER) for c in pkcs7.load_pem_pkcs7_certificates(cms)}
     check(bool(signers & set(prov.get("DeveloperCertificates", []))),

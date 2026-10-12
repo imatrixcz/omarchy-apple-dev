@@ -97,16 +97,21 @@ class SignerTests(unittest.TestCase):
         self.signer['serialization'] = SimpleNamespace(Encoding=SimpleNamespace(DER=None))
         self.signer['pkcs7'] = SimpleNamespace(load_pem_pkcs7_certificates=lambda cms:
             [SimpleNamespace(public_bytes=lambda encoding: b'FAKE-CERTIFICATE')])
-        for domains, allowed in ((self.domains, True), (['*'], False),
+        for domains, allowed in ((self.domains, True), (None, True), ([], True),
+                                 (['applinks:other.example.test'], True), (['*'], False),
                                  (['activitycontinuation:courses.example.test'], False), (['applinks:'], False)):
             with self.subTest(domains=domains):
                 signed = dict(self.granted, **{'com.apple.developer.associated-domains': domains})
+                if domains is None:
+                    signed.pop('com.apple.developer.associated-domains')
                 self.signer['signature_blob'] = lambda *args: plistlib.dumps(signed)
                 results = {}
                 self.signer['_check_signature_seals'](lambda ok, msg: results.update({msg: bool(ok)}),
                     self.app, self.app / 'Fake', 'fake-rcodesign', self.profile, 'FAKE000000',
                     'FAKE000000.com.example.fake')
-                self.assertEqual(results['signed Associated Domains match the profile grant'], allowed)
+                self.assertEqual(results.get('signed Associated Domains match the profile grant', True), allowed)
+                self.assertEqual(results['signed Associated Domains match the app request'], domains == self.domains)
+                self.assertEqual(all(results.values()), domains == self.domains)
         self.granted['com.apple.developer.associated-domains'] = ['applinks:other.example.test']
         self.assertFalse(self.signer['associated_domains_allowed'](self.domains, self.granted['com.apple.developer.associated-domains']))
 
